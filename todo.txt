@@ -1,0 +1,3 @@
+Have incoming messages go into a channel for processing (Buffered).
+Have a channel to buffer writing towards map. (Later DB)
+Work out how p2p sharing will work
