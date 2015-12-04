@@ -39,11 +39,14 @@ var data DataTable
 var data_state string
 
 var nick string
+var listen string
 
 type Node struct {
   ConnectionType string
   Connection net.Conn
-  IPAddr string
+  LocalIP string
+  RemoteIP string
+  Listen string
   DataChecksum string
   Data string
 }
@@ -62,6 +65,7 @@ type Message struct {
 
 type SyncCheck struct {
   Checksum string
+  ListeningAddress string
   KnownHosts []string
 }
 
@@ -275,12 +279,12 @@ func syncCheck() {
   for {
     var knownHosts []string
 
-    for k,v := range nodes {
-      if v.ConnectionType == "Client" {
-        knownHosts = append(knownHosts, k)
+    for _,v := range nodes {
+      if v.Listen != "nill" {
+        knownHosts = append(knownHosts, v.Listen)
       }
     }
-    broadCastMessage(Encode_msg(Packet{"SyncCheck",structs.Map(SyncCheck{data_state,knownHosts})}))
+    broadCastMessage(Encode_msg(Packet{"SyncCheck",structs.Map(SyncCheck{data_state,listen,knownHosts})}))
     time.Sleep(time.Second * 5)
   }
 }
@@ -328,11 +332,17 @@ func handleIncoming() {
         if node.DataChecksum != data_state {
           toSyncNodes <- node
         }
+
+        if packet.Data["ListeningAddress"] != nil {
+          node.Listen = packet.Data["ListeningAddress"].(string)
+          nodes[node.RemoteIP]=node
+        }
+
         if packet.Data["KnownHosts"] != nil {
           knownHosts := packet.Data["KnownHosts"].([]interface{})
           var knownHosts_string []string
 
-          //fmt.Println(knownHosts)
+          fmt.Println(packet)
 
           for _,v := range knownHosts {
             knownHosts_string = append(knownHosts_string, v.(string))
@@ -341,7 +351,7 @@ func handleIncoming() {
           for _,v := range knownHosts_string {
             found := false
             for _,node := range nodes {
-              if node.IPAddr == v || node.Connection.LocalAddr().String() == v{
+              if node.RemoteIP == v || node.LocalIP == v || node.Listen == v || listen == v || node.Listen == "nill"{
                 found = true
                 break
               }
@@ -402,7 +412,7 @@ func handleIncoming() {
         }
       }
     }
-    nodes[node.IPAddr]=node
+    nodes[node.RemoteIP]=node
   }
 }
 
@@ -439,9 +449,12 @@ func broadCastMessage(msg string) {
 func cleanUpNodes() {
   for {
     node := <-cleanUpNodesChan
-    fmt.Println("Cleaning up Connection: " + node.IPAddr)
-    node.Connection.Close()
-    delete(nodes, node.IPAddr)
+    fmt.Println("Cleaning up Connection: " + node.RemoteIP)
+    err := node.Connection.Close()
+    if err != nil {
+      fmt.Println("Failed to close!", err)
+    }
+    delete(nodes, node.RemoteIP)
   }
 }
 
@@ -503,6 +516,7 @@ func server(host string, port string) {
   }
 
   fmt.Println("Listening on: ", ln.Addr())
+  listen = ln.Addr().String()
 
   // Handle connections
   for {
@@ -535,6 +549,6 @@ func readConnection(node Node) {
 
 
 func handleConnection(type_of_connection string, conn net.Conn) {
-  nodes[conn.RemoteAddr().String()]= Node{type_of_connection,conn, conn.RemoteAddr().String(), "",""}
+  nodes[conn.RemoteAddr().String()]= Node{type_of_connection,conn,conn.LocalAddr().String(),conn.RemoteAddr().String(),"nill" , "",""}
   readConnection(nodes[conn.RemoteAddr().String()])
 }
