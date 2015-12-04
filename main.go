@@ -29,8 +29,7 @@ var toWrite chan string
 var cleanUpNodesChan chan Node
 var newNodesChan chan Node
 var toSyncNodes chan Node
-
-
+var toConnectNodes chan string
 
 var nodes map[string]Node
 var data DataTable
@@ -42,6 +41,7 @@ var data_state string
 var nick string
 
 type Node struct {
+  ConnectionType string
   Connection net.Conn
   IPAddr string
   DataChecksum string
@@ -91,7 +91,7 @@ func init() {
   cleanUpNodesChan = make(chan Node)
   newNodesChan = make(chan Node)
   toSyncNodes = make(chan Node)
-
+  toConnectNodes = make(chan string)
   nodes = make(map[string]Node)
 
   //data_table = make(map[string][]string)
@@ -140,6 +140,8 @@ func main() {
   go syncCheck()
   // Sync index
   go syncIndex()
+  // Connect nodes
+  go connectNodes()
 
   go client(new_node)
 
@@ -261,13 +263,22 @@ func syncIndex() {
   }
 }
 
+func connectNodes() {
+  for {
+    host := <-toConnectNodes
+    client(host)
+  }
+}
+
 // Broadcast current checksum and known hosts
 func syncCheck() {
   for {
     var knownHosts []string
 
-    for k,_ := range nodes {
-      knownHosts = append(knownHosts, k)
+    for k,v := range nodes {
+      if v.ConnectionType == "Client" {
+        knownHosts = append(knownHosts, k)
+      }
     }
     broadCastMessage(Encode_msg(Packet{"SyncCheck",structs.Map(SyncCheck{data_state,knownHosts})}))
     time.Sleep(time.Second * 5)
@@ -316,6 +327,32 @@ func handleIncoming() {
         node.DataChecksum = packet.Data["Checksum"].(string)
         if node.DataChecksum != data_state {
           toSyncNodes <- node
+        }
+        if packet.Data["KnownHosts"] != nil {
+          knownHosts := packet.Data["KnownHosts"].([]interface{})
+          var knownHosts_string []string
+
+          //fmt.Println(knownHosts)
+
+          for _,v := range knownHosts {
+            knownHosts_string = append(knownHosts_string, v.(string))
+          }
+
+          for _,v := range knownHosts_string {
+            found := false
+            for _,node := range nodes {
+              if node.IPAddr == v || node.Connection.LocalAddr().String() == v{
+                found = true
+                break
+              }
+            }
+
+            if found != true {
+              toConnectNodes <- v
+            }
+          }
+
+
         }
         // If we receive this packet it means there is a mismatch with the data and we need to correct it
       } else if packet.Type == "SyncIndex" {
@@ -451,7 +488,8 @@ func client(host string) {
     fmt.Println("Failed to connect to host!", err)
     return
   }
-  go handleConnection(conn)
+  fmt.Println("Connecting to: ", conn.RemoteAddr())
+  go handleConnection("Client",conn)
 }
 
 // Server function
@@ -470,7 +508,7 @@ func server(host string, port string) {
   for {
     if conn, err := ln.Accept(); err == nil {
       fmt.Println("Incomming connection: ", conn.RemoteAddr())
-      go handleConnection(conn);
+      go handleConnection("Server",conn);
     }
   }
 }
@@ -496,7 +534,7 @@ func readConnection(node Node) {
 }
 
 
-func handleConnection(conn net.Conn) {
-  nodes[conn.RemoteAddr().String()]= Node{conn, conn.RemoteAddr().String(), "",""}
+func handleConnection(type_of_connection string, conn net.Conn) {
+  nodes[conn.RemoteAddr().String()]= Node{type_of_connection,conn, conn.RemoteAddr().String(), "",""}
   readConnection(nodes[conn.RemoteAddr().String()])
 }
