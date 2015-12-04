@@ -13,7 +13,7 @@ Soon I was able to have two nodes talking to each other no more telnet! I added 
 
 ![alt tag](https://github.com/Quantum-Sicarius/p2pChat/blob/master/screenshots/Screenshot%20from%202015-12-02%2018-14-52.png)
 
-I stated working with data synchronization. I calculate a checksum of all the keys in my dataset. I used this approach as it used the least bandwidth.
+I started working with data synchronization. I calculate a checksum of all the keys in my dataset. I used this approach as it used the least bandwidth.
 
 ![alt tag](https://github.com/Quantum-Sicarius/p2pChat/blob/master/screenshots/Screenshot%20from%202015-12-04%2016-59-49.png)
 
