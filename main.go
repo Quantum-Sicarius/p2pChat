@@ -225,7 +225,7 @@ func Encode_msg(packet Packet) string {
   if err != nil {
     return "ERROR"
   }
-  return string(jsonString[:])
+  return string(jsonString[:]) + "\n"
 }
 
 // Decode JSON
@@ -233,7 +233,7 @@ func Decode_msg(msg string)(Packet, bool){
   var packet Packet
   err := json.Unmarshal([]byte(msg), &packet)
   if err != nil {
-    fmt.Println(err)
+    fmt.Println(msg ,err)
     return packet,false
   }
   return packet, true
@@ -327,7 +327,7 @@ func handleIncoming() {
           }
 
           missing_keys := CompareKeys(data.Data_table, index_string)
-          //fmt.Println(data.Data_table, index_string, missing_keys)
+          //fmt.Println(missing_keys)
 
           for _,v := range missing_keys {
             syncRequest(v, node)
@@ -339,12 +339,13 @@ func handleIncoming() {
       } else if packet.Type == "RequestPacket" {
         key := packet.Data["Key"].(string)
         syncNode(key, node)
+        //fmt.Println(packet)
         // If we receive this packet it means we got data from the other node to populate our table
       } else if packet.Type == "SyncPacket" {
         if packet.Data["Key"] != nil && packet.Data["Value"] != nil{
           //key := packet.Data["Key"].(string)
           var message Message
-
+          //fmt.Println(packet)
           value := packet.Data["Value"].(map[string]interface{})
           for k,v := range value{
             if k == "Data" {
@@ -475,10 +476,12 @@ func server(host string, port string) {
 }
 
 func readConnection(node Node) {
-  buf := make([]byte, 4096)
+  //buf := make([]byte, 4096)
   for {
-    n, err := node.Connection.Read(buf)
-    if err != nil || n == 0{
+    //n, err := node.Connection.Read(reader)
+    //n, err := reader.ReadLine("\n")
+    line, err := bufio.NewReader(node.Connection).ReadBytes('\n')
+    if err != nil{
       if err != io.EOF {
         fmt.Printf("Reached EOF")
       }
@@ -486,7 +489,7 @@ func readConnection(node Node) {
       break
     }
 
-    node.Data = (string(buf[0:n]))
+    node.Data = (string(line))
 
     inchan <- node
   }
