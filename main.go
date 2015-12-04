@@ -294,7 +294,7 @@ func printReply(message Message) {
 func handleIncoming() {
   for {
     node := <-inchan
-    fmt.Println("Got: " ,node.Data)
+    //fmt.Println("Got: " ,node.Data)
     packet,success := Decode_msg(node.Data)
     //fmt.Println(key,value)
     if success {
@@ -359,6 +359,7 @@ func handleIncoming() {
           }
 
           data.writeToTable(message)
+          printReply(message)
           go printCheckSum()
         }
       }
@@ -380,7 +381,7 @@ func unicastMessage(msg string, node Node) {
     fmt.Println("Error sending message!", err)
     cleanUpNodesChan <- node
   } else {
-    fmt.Println("Sent to node: ", msg)
+    //fmt.Println("Sent to node: ", msg)
   }
 }
 
@@ -392,7 +393,7 @@ func broadCastMessage(msg string) {
       fmt.Println("Error sending message!", err)
       cleanUpNodesChan <- node
     } else {
-      fmt.Println("Sent: ", msg)
+      //fmt.Println("Sent: ", msg)
     }
   }
 }
