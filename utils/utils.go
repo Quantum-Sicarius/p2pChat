@@ -1,36 +1,49 @@
 package utils
 
 import (
-  "crypto/md5"
-  "encoding/hex"
+  //"crypto/md5"
+  //"encoding/hex"
   //"sync"
   //"strings"
   //"io"
   //"log"
   //"fmt"
-  "sort"
+  //"sort"
 )
 
-func Calculate_data_checksum(table map[string][]string)string {
-  mk := make([]string, len(table))
-  i := 0
-  for k, _ := range table {
-    mk[i] = k
-    i++
-  }
-  sort.Strings(mk)
 
-  temp_values := ""
-  for _,v := range mk{
-    temp_values = temp_values + v
+
+func GetIndex(table map[string][]string)[]string {
+  var keys []string
+
+  for k,_ := range table {
+    keys = append(keys, k)
   }
 
-  byte_values := []byte(temp_values)
-  md5_sum := md5.Sum(byte_values)
-
-  return hex.EncodeToString(md5_sum[:])
+  return keys
 }
 
-func Update_data_table(msg map[string][]string) {
-  //sync.Mutex
+// Compares 2 sets of keys and returns an array of keys that are missing
+func CompareKeys(table map[string][]string, other []string)[]string {
+  var keys []string
+  var exists bool
+
+  for _,v := range other {
+    exists = false
+
+    for k,_ := range table {
+      if (k == v) {
+        exists = true
+        //fmt.Println("Exists")
+        break
+      }
+    }
+
+    if exists != true {
+      //fmt.Println("Does not exist")
+      keys = append(keys, v)
+    }
+  }
+
+  return keys
 }

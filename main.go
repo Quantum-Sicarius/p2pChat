@@ -10,7 +10,7 @@ import (
   //"bytes"
   "io"
   //"io/ioutil"
-  "quantum-sicarius.za.net/p2pChat/utils"
+  //"quantum-sicarius.za.net/p2pChat/utils"
   "sync"
   "crypto/md5"
   "time"
@@ -19,6 +19,7 @@ import (
   "encoding/json"
   //"reflect"
   "github.com/fatih/structs"
+  "sort"
 )
 
 var inchan chan Node
@@ -27,6 +28,9 @@ var toWrite chan string
 // Channel to buffer nodes that need closing
 var cleanUpNodesChan chan Node
 var newNodesChan chan Node
+var toSyncNodes chan Node
+
+
 
 var nodes map[string]Node
 var data DataTable
@@ -61,15 +65,23 @@ type SyncCheck struct {
   KnownHosts []string
 }
 
+type SyncIndex struct {
+  Keys []string
+}
+
 type SyncPacket struct {
   Key string
-  Value string
+  Value Message
+}
+
+type RequestPacket struct {
+  Key string
 }
 
 type DataTable struct{
   Mutex sync.Mutex
   // Map of chat
-  Data_table map[string][]string
+  Data_table map[string]Message
 }
 
 func init() {
@@ -78,11 +90,12 @@ func init() {
   toWrite = make(chan string)
   cleanUpNodesChan = make(chan Node)
   newNodesChan = make(chan Node)
+  toSyncNodes = make(chan Node)
 
   nodes = make(map[string]Node)
 
   //data_table = make(map[string][]string)
-  data.Data_table = make(map[string][]string)
+  data.Data_table = make(map[string]Message)
   //data := new(DataTable{}
   data_state = data.getDataCheckSum()
   fmt.Println("Currect DataChecksum: ", data_state)
@@ -125,6 +138,9 @@ func main() {
   go cleanUpNodes()
   // Sync keep alive
   go syncCheck()
+  // Sync index
+  go syncIndex()
+
   go client(new_node)
 
   server(host,port)
@@ -135,7 +151,62 @@ func (data *DataTable) getDataCheckSum() string {
   data.Mutex.Lock()
   defer data.Mutex.Unlock()
 
-  return utils.Calculate_data_checksum(data.Data_table)
+  return Calculate_data_checksum(data.Data_table)
+}
+
+func Calculate_data_checksum(table map[string]Message)string {
+  mk := make([]string, len(table))
+  i := 0
+  for k, _ := range table {
+    mk[i] = k
+    i++
+  }
+  sort.Strings(mk)
+
+  temp_values := ""
+  for _,v := range mk{
+    temp_values = temp_values + v
+  }
+
+  byte_values := []byte(temp_values)
+  md5_sum := md5.Sum(byte_values)
+
+  return hex.EncodeToString(md5_sum[:])
+}
+
+func GetIndex(table map[string]Message)[]string {
+  var keys []string
+
+  for k,_ := range table {
+    keys = append(keys, k)
+  }
+
+  return keys
+}
+
+// Compares 2 sets of keys and returns an array of keys that are missing
+func CompareKeys(table map[string]Message, other []string)[]string {
+  var keys []string
+  var exists bool
+
+  for _,v := range other {
+    exists = false
+
+    for k,_ := range table {
+      if (k == v) {
+        exists = true
+        //fmt.Println("Exists")
+        break
+      }
+    }
+
+    if exists != true {
+      //fmt.Println("Does not exist")
+      keys = append(keys, v)
+    }
+  }
+
+  return keys
 }
 
 // Write to table
@@ -144,7 +215,7 @@ func (data *DataTable) writeToTable(message Message){
   defer data.Mutex.Unlock()
 
 
-  data.Data_table[message.Key] = []string{message.Time, message.Nick, message.Data}
+  data.Data_table[message.Key] = message
   //fmt.Println("data updated")
 }
 
@@ -168,6 +239,29 @@ func Decode_msg(msg string)(Packet, bool){
   return packet, true
 }
 
+func syncRequest(key string, node Node) {
+  message := Encode_msg(Packet{"RequestPacket",structs.Map(RequestPacket{key})})
+  unicastMessage(message, node)
+}
+
+func syncNode(key string, node Node) {
+
+  msg := data.Data_table[key]
+
+  message := Encode_msg(Packet{"SyncPacket",structs.Map(SyncPacket{key,msg})})
+  unicastMessage(message, node)
+}
+
+// Send key value pair
+func syncIndex() {
+  for {
+    node := <-toSyncNodes
+    message := Encode_msg(Packet{"SyncIndex",structs.Map(SyncIndex{GetIndex(data.Data_table)})})
+    unicastMessage(message, node)
+  }
+}
+
+// Broadcast current checksum and known hosts
 func syncCheck() {
   for {
     var knownHosts []string
@@ -217,8 +311,56 @@ func handleIncoming() {
         data.writeToTable(message)
         go printCheckSum()
         printReply(message)
-      } else if packet.Type == "SyncCheck"{
+        // This packet is just a keep alive
+      } else if packet.Type == "SyncCheck" {
         node.DataChecksum = packet.Data["Checksum"].(string)
+        if node.DataChecksum != data_state {
+          toSyncNodes <- node
+        }
+        // If we receive this packet it means there is a mismatch with the data and we need to correct it
+      } else if packet.Type == "SyncIndex" {
+        if packet.Data["Keys"] != nil {
+          index := packet.Data["Keys"].([]interface{})
+          var index_string []string
+          for _,v := range index {
+            index_string = append(index_string, v.(string))
+          }
+
+          missing_keys := CompareKeys(data.Data_table, index_string)
+          //fmt.Println(data.Data_table, index_string, missing_keys)
+
+          for _,v := range missing_keys {
+            syncRequest(v, node)
+          }
+        }
+
+        //go unicastMessage(Encode_msg(), node)
+        // If we receive this packet it means the node whishes to get a value of a key
+      } else if packet.Type == "RequestPacket" {
+        key := packet.Data["Key"].(string)
+        syncNode(key, node)
+        // If we receive this packet it means we got data from the other node to populate our table
+      } else if packet.Type == "SyncPacket" {
+        if packet.Data["Key"] != nil && packet.Data["Value"] != nil{
+          //key := packet.Data["Key"].(string)
+          var message Message
+
+          value := packet.Data["Value"].(map[string]interface{})
+          for k,v := range value{
+            if k == "Data" {
+              message.Data = v.(string)
+            } else if k == "Key" {
+              message.Key = v.(string)
+            } else if k == "Time" {
+              message.Time = v.(string)
+            } else if k == "Nick" {
+              message.Nick = v.(string)
+            }
+          }
+
+          data.writeToTable(message)
+          go printCheckSum()
+        }
       }
     }
     nodes[node.IPAddr]=node
@@ -229,6 +371,17 @@ func handleIncoming() {
 func printCheckSum() {
   data_state = data.getDataCheckSum()
   fmt.Println(data_state)
+}
+
+// Message a single node
+func unicastMessage(msg string, node Node) {
+  _ ,err := node.Connection.Write([]byte(msg))
+  if err != nil {
+    fmt.Println("Error sending message!", err)
+    cleanUpNodesChan <- node
+  } else {
+    fmt.Println("Sent to node: ", msg)
+  }
 }
 
 // Broad cast to all Nodes
