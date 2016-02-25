@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	//"log"
 	"net"
 	"os"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/op/go-logging"
 
 	"github.com/fatih/color"
 	"github.com/fatih/structs"
@@ -37,6 +39,11 @@ var dataState string
 
 var nick string
 var listen string
+
+var log = logging.MustGetLogger("example")
+var format = logging.MustStringFormatter(
+	`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`,
+)
 
 type Node struct {
 	ConnectionType string
@@ -103,6 +110,22 @@ func init() {
 }
 
 func main() {
+	// Setup Logging
+	backend1 := logging.NewLogBackend(os.Stderr, "", 0)
+	backend2 := logging.NewLogBackend(os.Stderr, "", 0)
+
+	// For messages written to backend2 we want to add some additional
+	// information to the output, including the used log level and the name of
+	// the function.
+	backend2Formatter := logging.NewBackendFormatter(backend2, format)
+
+	// Only errors and more severe messages should be sent to backend1
+	backend1Leveled := logging.AddModuleLevel(backend1)
+	backend1Leveled.SetLevel(logging.ERROR, "")
+
+	// Set the backends to be used.
+	logging.SetBackend(backend1Leveled, backend2Formatter)
+
 	var host string
 	var port string
 	var newNode string
@@ -338,7 +361,7 @@ func handleIncoming() {
 					knownHosts := packet.Data["KnownHosts"].([]interface{})
 					var knownHostsString []string
 
-					fmt.Println(packet)
+					log.Debug(packet)
 
 					for _, v := range knownHosts {
 						knownHostsString = append(knownHostsString, v.(string))
@@ -387,7 +410,7 @@ func handleIncoming() {
 				if packet.Data["Key"] != nil && packet.Data["Value"] != nil {
 					//key := packet.Data["Key"].(string)
 					var message Message
-					//fmt.Println(packet)
+					log.Debug(packet)
 					value := packet.Data["Value"].(map[string]interface{})
 					for k, v := range value {
 						if k == "Data" {
@@ -433,7 +456,7 @@ func broadCastMessage(msg string) {
 	for _, node := range nodes {
 		_, err := node.Connection.Write([]byte(msg))
 		if err != nil {
-			fmt.Println("Error sending message!", err)
+			log.Error("Error sending message!", err)
 			cleanUpNodesChan <- node
 		} else {
 			//fmt.Println("Sent: ", msg)
@@ -444,10 +467,10 @@ func broadCastMessage(msg string) {
 func cleanUpNodes() {
 	for {
 		node := <-cleanUpNodesChan
-		fmt.Println("Cleaning up Connection: " + node.RemoteIP)
+		log.Info("Cleaning up Connection: " + node.RemoteIP)
 		err := node.Connection.Close()
 		if err != nil {
-			fmt.Println("Failed to close!", err)
+			log.Error("Failed to close!", err)
 		}
 		delete(nodes, node.RemoteIP)
 	}
@@ -493,7 +516,7 @@ func clientInput() {
 func client(host string) {
 	conn, err := net.Dial("tcp", host)
 	if err != nil {
-		fmt.Println("Failed to connect to host!", err)
+		log.Error("Failed to connect to host!", err)
 		return
 	}
 	fmt.Println("Connecting to: ", conn.RemoteAddr())
@@ -507,16 +530,17 @@ func server(host string, port string) {
 	// Start listening
 	ln, err := net.Listen("tcp", hostString)
 	if err != nil {
-		log.Fatalf("Failed to listen:", err)
+		log.Error("Failed to listen:", err)
+		os.Exit(1)
 	}
 
-	fmt.Println("Listening on: ", ln.Addr())
+	log.Info("Listening on: ", ln.Addr())
 	listen = ln.Addr().String()
 
 	// Handle connections
 	for {
 		if conn, err := ln.Accept(); err == nil {
-			fmt.Println("Incomming connection: ", conn.RemoteAddr())
+			log.Info("Incomming connection: ", conn.RemoteAddr())
 			go handleConnection("Server", conn)
 		}
 	}
@@ -530,7 +554,7 @@ func readConnection(node Node) {
 		line, err := bufio.NewReader(node.Connection).ReadBytes('\n')
 		if err != nil {
 			if err != io.EOF {
-				fmt.Printf("Reached EOF")
+				log.Warning("Reached EOF")
 			}
 			cleanUpNodesChan <- node
 			break
