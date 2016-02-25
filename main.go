@@ -44,6 +44,7 @@ var format = logging.MustStringFormatter(
 	`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`,
 )
 
+// Node struct
 type Node struct {
 	ConnectionType string
 	Connection     net.Conn
@@ -54,26 +55,30 @@ type Node struct {
 	Data           string
 }
 
+// Packet struct
 type Packet struct {
 	Type string
 	Data map[string]interface{}
 }
 
+// Message struct
 type Message struct {
-	Key  string
-	Time string
-	Nick string
-	Data string
+	Key  string // The key value.
+	Time string // Timestamp.
+	Nick string // The incoming nickname.
+	Data string // The encoded data.
 }
 
+// SyncCheck struct
 type SyncCheck struct {
-	Checksum         string
-	ListeningAddress string
-	KnownHosts       []string
+	Checksum         string   // The md5 sum of the current datatable of the local node.
+	ListeningAddress string   // Current address that this node is listening on.
+	KnownHosts       []string // All known hosts that this node knows of.
 }
 
+// SyncIndex struct
 type SyncIndex struct {
-	Keys []string
+	Keys []string // Array of keys of our table
 }
 
 type SyncPacket struct {
@@ -529,7 +534,7 @@ func server(host string, port string) {
 	// Start listening
 	ln, err := net.Listen("tcp", hostString)
 	if err != nil {
-		log.Errorf("Failed to listen:", err)
+		log.Fatal("Failed to listen:", err)
 	}
 
 	log.Info("Listening on: ", ln.Addr())
