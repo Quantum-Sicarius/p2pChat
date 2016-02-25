@@ -7,17 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	//"log"
 	"net"
 	"os"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/op/go-logging"
-
 	"github.com/fatih/color"
 	"github.com/fatih/structs"
+	"github.com/op/go-logging"
 )
 
 var inchan chan Node
@@ -40,7 +38,8 @@ var dataState string
 var nick string
 var listen string
 
-var log = logging.MustGetLogger("example")
+// Instantiate Logger
+var log = logging.MustGetLogger("p2pChat")
 var format = logging.MustStringFormatter(
 	`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`,
 )
@@ -89,7 +88,7 @@ type RequestPacket struct {
 type DataTable struct {
 	Mutex sync.Mutex
 	// Map of chat
-	Data_table map[string]Message
+	DataTable map[string]Message
 }
 
 func init() {
@@ -102,8 +101,8 @@ func init() {
 	toConnectNodes = make(chan string)
 	nodes = make(map[string]Node)
 
-	//data_table = make(map[string][]string)
-	data.Data_table = make(map[string]Message)
+	//DataTable = make(map[string][]string)
+	data.DataTable = make(map[string]Message)
 	//data := new(DataTable{}
 	dataState = data.getDataCheckSum()
 	fmt.Println("Currect DataChecksum: ", dataState)
@@ -177,10 +176,11 @@ func (data *DataTable) getDataCheckSum() string {
 	data.Mutex.Lock()
 	defer data.Mutex.Unlock()
 
-	return Calculate_data_checksum(data.Data_table)
+	return calculateDataChecksum(data.DataTable)
 }
 
-func Calculate_data_checksum(table map[string]Message) string {
+// TODO
+func calculateDataChecksum(table map[string]Message) string {
 	mk := make([]string, len(table))
 	i := 0
 	for k := range table {
@@ -200,7 +200,7 @@ func Calculate_data_checksum(table map[string]Message) string {
 	return hex.EncodeToString(md5Sum[:])
 }
 
-func GetIndex(table map[string]Message) []string {
+func getIndex(table map[string]Message) []string {
 	var keys []string
 
 	for k := range table {
@@ -211,7 +211,7 @@ func GetIndex(table map[string]Message) []string {
 }
 
 // Compares 2 sets of keys and returns an array of keys that are missing
-func CompareKeys(table map[string]Message, other []string) []string {
+func compareKeys(table map[string]Message, other []string) []string {
 	var keys []string
 	var exists bool
 
@@ -240,12 +240,11 @@ func (data *DataTable) writeToTable(message Message) {
 	data.Mutex.Lock()
 	defer data.Mutex.Unlock()
 
-	data.Data_table[message.Key] = message
-	//fmt.Println("data updated")
+	data.DataTable[message.Key] = message
 }
 
 // Encode JSON
-func Encode_msg(packet Packet) string {
+func encodeMsg(packet Packet) string {
 	jsonString, err := json.Marshal(packet)
 	if err != nil {
 		return "ERROR"
@@ -254,7 +253,7 @@ func Encode_msg(packet Packet) string {
 }
 
 // Decode JSON
-func Decode_msg(msg string) (Packet, bool) {
+func decodeMsg(msg string) (Packet, bool) {
 	var packet Packet
 	err := json.Unmarshal([]byte(msg), &packet)
 	if err != nil {
@@ -265,15 +264,15 @@ func Decode_msg(msg string) (Packet, bool) {
 }
 
 func syncRequest(key string, node Node) {
-	message := Encode_msg(Packet{"RequestPacket", structs.Map(RequestPacket{key})})
+	message := encodeMsg(Packet{"RequestPacket", structs.Map(RequestPacket{key})})
 	unicastMessage(message, node)
 }
 
 func syncNode(key string, node Node) {
 
-	msg := data.Data_table[key]
+	msg := data.DataTable[key]
 
-	message := Encode_msg(Packet{"SyncPacket", structs.Map(SyncPacket{key, msg})})
+	message := encodeMsg(Packet{"SyncPacket", structs.Map(SyncPacket{key, msg})})
 	unicastMessage(message, node)
 }
 
@@ -281,7 +280,7 @@ func syncNode(key string, node Node) {
 func syncIndex() {
 	for {
 		node := <-toSyncNodes
-		message := Encode_msg(Packet{"SyncIndex", structs.Map(SyncIndex{GetIndex(data.Data_table)})})
+		message := encodeMsg(Packet{"SyncIndex", structs.Map(SyncIndex{getIndex(data.DataTable)})})
 		unicastMessage(message, node)
 	}
 }
@@ -303,13 +302,13 @@ func syncCheck() {
 				knownHosts = append(knownHosts, v.Listen)
 			}
 		}
-		broadCastMessage(Encode_msg(Packet{"SyncCheck", structs.Map(SyncCheck{dataState, listen, knownHosts})}))
+		broadCastMessage(encodeMsg(Packet{"SyncCheck", structs.Map(SyncCheck{dataState, listen, knownHosts})}))
 		time.Sleep(time.Second * 5)
 	}
 }
 
 func printReply(message Message) {
-	//node := data.Data_table[key]
+	//node := data.DataTable[key]
 
 	timestamp, _ := time.Parse(time.RFC1123, message.Time)
 	//fmt.Println(timestamp)
@@ -329,7 +328,7 @@ func handleIncoming() {
 	for {
 		node := <-inchan
 		//fmt.Println("Got: " ,node.Data)
-		packet, success := Decode_msg(node.Data)
+		packet, success := decodeMsg(node.Data)
 		//fmt.Println(key,value)
 		if success {
 			//printReply(packet)
@@ -391,7 +390,7 @@ func handleIncoming() {
 						indexString = append(indexString, v.(string))
 					}
 
-					missingKeys := CompareKeys(data.Data_table, indexString)
+					missingKeys := compareKeys(data.DataTable, indexString)
 					//fmt.Println(missingKeys)
 
 					for _, v := range missingKeys {
@@ -399,7 +398,7 @@ func handleIncoming() {
 					}
 				}
 
-				//go unicastMessage(Encode_msg(), node)
+				//go unicastMessage(encodeMsg(), node)
 				// If we receive this packet it means the node whishes to get a value of a key
 			} else if packet.Type == "RequestPacket" {
 				key := packet.Data["Key"].(string)
@@ -410,7 +409,7 @@ func handleIncoming() {
 				if packet.Data["Key"] != nil && packet.Data["Value"] != nil {
 					//key := packet.Data["Key"].(string)
 					var message Message
-					log.Debug(packet)
+
 					value := packet.Data["Value"].(map[string]interface{})
 					for k, v := range value {
 						if k == "Data" {
@@ -437,14 +436,14 @@ func handleIncoming() {
 // ASYNC update checksum
 func printCheckSum() {
 	dataState = data.getDataCheckSum()
-	fmt.Println(dataState)
+	log.Info(dataState)
 }
 
 // Message a single node
 func unicastMessage(msg string, node Node) {
 	_, err := node.Connection.Write([]byte(msg))
 	if err != nil {
-		fmt.Println("Error sending message!", err)
+		log.Error("Error sending message!", err)
 		cleanUpNodesChan <- node
 	} else {
 		//fmt.Println("Sent to node: ", msg)
@@ -487,7 +486,7 @@ func processInput(msg string) {
 	//data_map["Message"] = msg_array
 	message := Message{key, timestamp, nick, msg}
 
-	input := Encode_msg(Packet{"Message", structs.Map(message)})
+	input := encodeMsg(Packet{"Message", structs.Map(message)})
 	//fmt.Println(input)
 
 	go broadCastMessage(input)
@@ -530,8 +529,7 @@ func server(host string, port string) {
 	// Start listening
 	ln, err := net.Listen("tcp", hostString)
 	if err != nil {
-		log.Error("Failed to listen:", err)
-		os.Exit(1)
+		log.Errorf("Failed to listen:", err)
 	}
 
 	log.Info("Listening on: ", ln.Addr())
