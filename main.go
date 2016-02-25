@@ -1,30 +1,27 @@
 package main
 
 import (
-  "net"
-  "log"
-  "fmt"
-  //"strconv"
-  "os"
-  "bufio"
-  //"bytes"
-  "io"
-  //"io/ioutil"
-  //"quantum-sicarius.za.net/p2pChat/utils"
-  "sync"
-  "crypto/md5"
-  "time"
-  "encoding/hex"
-  "github.com/fatih/color"
-  "encoding/json"
-  //"reflect"
-  "github.com/fatih/structs"
-  "sort"
+	"bufio"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/fatih/color"
+	"github.com/fatih/structs"
 )
 
 var inchan chan Node
 var outchan chan string
 var toWrite chan string
+
 // Channel to buffer nodes that need closing
 var cleanUpNodesChan chan Node
 var newNodesChan chan Node
@@ -36,519 +33,516 @@ var data DataTable
 
 // Current revision of chat
 // Calculated by the hash of all values in map
-var data_state string
+var dataState string
 
 var nick string
 var listen string
 
 type Node struct {
-  ConnectionType string
-  Connection net.Conn
-  LocalIP string
-  RemoteIP string
-  Listen string
-  DataChecksum string
-  Data string
+	ConnectionType string
+	Connection     net.Conn
+	LocalIP        string
+	RemoteIP       string
+	Listen         string
+	DataChecksum   string
+	Data           string
 }
 
 type Packet struct {
-  Type string
-  Data map[string]interface{}
+	Type string
+	Data map[string]interface{}
 }
 
 type Message struct {
-  Key string
-  Time string
-  Nick string
-  Data string
+	Key  string
+	Time string
+	Nick string
+	Data string
 }
 
 type SyncCheck struct {
-  Checksum string
-  ListeningAddress string
-  KnownHosts []string
+	Checksum         string
+	ListeningAddress string
+	KnownHosts       []string
 }
 
 type SyncIndex struct {
-  Keys []string
+	Keys []string
 }
 
 type SyncPacket struct {
-  Key string
-  Value Message
+	Key   string
+	Value Message
 }
 
 type RequestPacket struct {
-  Key string
+	Key string
 }
 
-type DataTable struct{
-  Mutex sync.Mutex
-  // Map of chat
-  Data_table map[string]Message
+type DataTable struct {
+	Mutex sync.Mutex
+	// Map of chat
+	Data_table map[string]Message
 }
 
 func init() {
-  inchan = make(chan Node)
-  outchan = make(chan string)
-  toWrite = make(chan string)
-  cleanUpNodesChan = make(chan Node)
-  newNodesChan = make(chan Node)
-  toSyncNodes = make(chan Node)
-  toConnectNodes = make(chan string)
-  nodes = make(map[string]Node)
+	inchan = make(chan Node)
+	outchan = make(chan string)
+	toWrite = make(chan string)
+	cleanUpNodesChan = make(chan Node)
+	newNodesChan = make(chan Node)
+	toSyncNodes = make(chan Node)
+	toConnectNodes = make(chan string)
+	nodes = make(map[string]Node)
 
-  //data_table = make(map[string][]string)
-  data.Data_table = make(map[string]Message)
-  //data := new(DataTable{}
-  data_state = data.getDataCheckSum()
-  fmt.Println("Currect DataChecksum: ", data_state)
+	//data_table = make(map[string][]string)
+	data.Data_table = make(map[string]Message)
+	//data := new(DataTable{}
+	dataState = data.getDataCheckSum()
+	fmt.Println("Currect DataChecksum: ", dataState)
 }
 
 func main() {
-  var host string
-  var port string
-  var new_node string
+	var host string
+	var port string
+	var newNode string
 
-  fmt.Printf("Enter host (Leave blank for localhost): ")
-  fmt.Scanln(&host)
+	fmt.Printf("Enter host (Leave blank for localhost): ")
+	fmt.Scanln(&host)
 
-  fmt.Printf("Enter port (Leave blank for 8080): ")
-  fmt.Scanln(&port)
+	fmt.Printf("Enter port (Leave blank for 8080): ")
+	fmt.Scanln(&port)
 
-  fmt.Print("Enter a nick name:")
-  fmt.Scanln(&nick)
+	fmt.Print("Enter a nick name:")
+	fmt.Scanln(&nick)
 
-  fmt.Print("Enter another node's address:")
-  fmt.Scanln(&new_node)
+	fmt.Print("Enter another node's address:")
+	fmt.Scanln(&newNode)
 
-  if len(host) == 0 || host == "" {
-    host = "localhost"
-  }
+	if len(host) == 0 || host == "" {
+		host = "localhost"
+	}
 
-  if len(port) == 0 || port == "" {
-    port = "8080"
-  }
+	if len(port) == 0 || port == "" {
+		port = "8080"
+	}
 
-  if len(nick) == 0 || nick == "" {
-    nick = "IsItSoHardToGetANick?"
-  }
+	if len(nick) == 0 || nick == "" {
+		nick = "IsItSoHardToGetANick?"
+	}
 
-  // Linten to user keystrokes
-  go clientInput()
-  // Start printing routine
-  go handleIncoming()
-  // Handle cleanup
-  go cleanUpNodes()
-  // Sync keep alive
-  go syncCheck()
-  // Sync index
-  go syncIndex()
-  // Connect nodes
-  go connectNodes()
+	// Linten to user keystrokes
+	go clientInput()
+	// Start printing routine
+	go handleIncoming()
+	// Handle cleanup
+	go cleanUpNodes()
+	// Sync keep alive
+	go syncCheck()
+	// Sync index
+	go syncIndex()
+	// Connect nodes
+	go connectNodes()
 
-  go client(new_node)
+	go client(newNode)
 
-  server(host,port)
+	server(host, port)
 }
 
 // Get checksum
 func (data *DataTable) getDataCheckSum() string {
-  data.Mutex.Lock()
-  defer data.Mutex.Unlock()
+	data.Mutex.Lock()
+	defer data.Mutex.Unlock()
 
-  return Calculate_data_checksum(data.Data_table)
+	return Calculate_data_checksum(data.Data_table)
 }
 
-func Calculate_data_checksum(table map[string]Message)string {
-  mk := make([]string, len(table))
-  i := 0
-  for k, _ := range table {
-    mk[i] = k
-    i++
-  }
-  sort.Strings(mk)
+func Calculate_data_checksum(table map[string]Message) string {
+	mk := make([]string, len(table))
+	i := 0
+	for k := range table {
+		mk[i] = k
+		i++
+	}
+	sort.Strings(mk)
 
-  temp_values := ""
-  for _,v := range mk{
-    temp_values = temp_values + v
-  }
+	tempValues := ""
+	for _, v := range mk {
+		tempValues = tempValues + v
+	}
 
-  byte_values := []byte(temp_values)
-  md5_sum := md5.Sum(byte_values)
+	byteValues := []byte(tempValues)
+	md5Sum := md5.Sum(byteValues)
 
-  return hex.EncodeToString(md5_sum[:])
+	return hex.EncodeToString(md5Sum[:])
 }
 
-func GetIndex(table map[string]Message)[]string {
-  var keys []string
+func GetIndex(table map[string]Message) []string {
+	var keys []string
 
-  for k,_ := range table {
-    keys = append(keys, k)
-  }
+	for k := range table {
+		keys = append(keys, k)
+	}
 
-  return keys
+	return keys
 }
 
 // Compares 2 sets of keys and returns an array of keys that are missing
-func CompareKeys(table map[string]Message, other []string)[]string {
-  var keys []string
-  var exists bool
+func CompareKeys(table map[string]Message, other []string) []string {
+	var keys []string
+	var exists bool
 
-  for _,v := range other {
-    exists = false
+	for _, v := range other {
+		exists = false
 
-    for k,_ := range table {
-      if (k == v) {
-        exists = true
-        //fmt.Println("Exists")
-        break
-      }
-    }
+		for k := range table {
+			if k == v {
+				exists = true
+				//fmt.Println("Exists")
+				break
+			}
+		}
 
-    if exists != true {
-      //fmt.Println("Does not exist")
-      keys = append(keys, v)
-    }
-  }
+		if exists != true {
+			//fmt.Println("Does not exist")
+			keys = append(keys, v)
+		}
+	}
 
-  return keys
+	return keys
 }
 
 // Write to table
-func (data *DataTable) writeToTable(message Message){
-  data.Mutex.Lock()
-  defer data.Mutex.Unlock()
+func (data *DataTable) writeToTable(message Message) {
+	data.Mutex.Lock()
+	defer data.Mutex.Unlock()
 
-
-  data.Data_table[message.Key] = message
-  //fmt.Println("data updated")
+	data.Data_table[message.Key] = message
+	//fmt.Println("data updated")
 }
 
 // Encode JSON
 func Encode_msg(packet Packet) string {
-  jsonString, err := json.Marshal(packet)
-  if err != nil {
-    return "ERROR"
-  }
-  return string(jsonString[:]) + "\n"
+	jsonString, err := json.Marshal(packet)
+	if err != nil {
+		return "ERROR"
+	}
+	return string(jsonString[:]) + "\n"
 }
 
 // Decode JSON
-func Decode_msg(msg string)(Packet, bool){
-  var packet Packet
-  err := json.Unmarshal([]byte(msg), &packet)
-  if err != nil {
-    fmt.Println(msg ,err)
-    return packet,false
-  }
-  return packet, true
+func Decode_msg(msg string) (Packet, bool) {
+	var packet Packet
+	err := json.Unmarshal([]byte(msg), &packet)
+	if err != nil {
+		fmt.Println(msg, err)
+		return packet, false
+	}
+	return packet, true
 }
 
 func syncRequest(key string, node Node) {
-  message := Encode_msg(Packet{"RequestPacket",structs.Map(RequestPacket{key})})
-  unicastMessage(message, node)
+	message := Encode_msg(Packet{"RequestPacket", structs.Map(RequestPacket{key})})
+	unicastMessage(message, node)
 }
 
 func syncNode(key string, node Node) {
 
-  msg := data.Data_table[key]
+	msg := data.Data_table[key]
 
-  message := Encode_msg(Packet{"SyncPacket",structs.Map(SyncPacket{key,msg})})
-  unicastMessage(message, node)
+	message := Encode_msg(Packet{"SyncPacket", structs.Map(SyncPacket{key, msg})})
+	unicastMessage(message, node)
 }
 
 // Send key value pair
 func syncIndex() {
-  for {
-    node := <-toSyncNodes
-    message := Encode_msg(Packet{"SyncIndex",structs.Map(SyncIndex{GetIndex(data.Data_table)})})
-    unicastMessage(message, node)
-  }
+	for {
+		node := <-toSyncNodes
+		message := Encode_msg(Packet{"SyncIndex", structs.Map(SyncIndex{GetIndex(data.Data_table)})})
+		unicastMessage(message, node)
+	}
 }
 
 func connectNodes() {
-  for {
-    host := <-toConnectNodes
-    client(host)
-  }
+	for {
+		host := <-toConnectNodes
+		client(host)
+	}
 }
 
 // Broadcast current checksum and known hosts
 func syncCheck() {
-  for {
-    var knownHosts []string
+	for {
+		var knownHosts []string
 
-    for _,v := range nodes {
-      if v.Listen != "nill" {
-        knownHosts = append(knownHosts, v.Listen)
-      }
-    }
-    broadCastMessage(Encode_msg(Packet{"SyncCheck",structs.Map(SyncCheck{data_state,listen,knownHosts})}))
-    time.Sleep(time.Second * 5)
-  }
+		for _, v := range nodes {
+			if v.Listen != "nill" {
+				knownHosts = append(knownHosts, v.Listen)
+			}
+		}
+		broadCastMessage(Encode_msg(Packet{"SyncCheck", structs.Map(SyncCheck{dataState, listen, knownHosts})}))
+		time.Sleep(time.Second * 5)
+	}
 }
 
 func printReply(message Message) {
-  //node := data.Data_table[key]
+	//node := data.Data_table[key]
 
-  timestamp, _ := time.Parse(time.RFC1123, message.Time)
-  //fmt.Println(timestamp)
-  local_time := timestamp.Local().Format(time.Kitchen)
-  //fmt.Println(node[0], node[1], node[2])
-  color.Set(color.FgYellow)
-  fmt.Printf("<%s> ", local_time)
-  color.Set(color.FgGreen)
-  fmt.Printf("%s: ", message.Nick)
-  color.Set(color.FgCyan)
-  fmt.Printf(message.Data)
-  color.Unset()
+	timestamp, _ := time.Parse(time.RFC1123, message.Time)
+	//fmt.Println(timestamp)
+	localTime := timestamp.Local().Format(time.Kitchen)
+	//fmt.Println(node[0], node[1], node[2])
+	color.Set(color.FgYellow)
+	fmt.Printf("<%s> ", localTime)
+	color.Set(color.FgGreen)
+	fmt.Printf("%s: ", message.Nick)
+	color.Set(color.FgCyan)
+	fmt.Printf(message.Data)
+	color.Unset()
 }
 
 // Display incoming messages
 func handleIncoming() {
-  for {
-    node := <-inchan
-    //fmt.Println("Got: " ,node.Data)
-    packet,success := Decode_msg(node.Data)
-    //fmt.Println(key,value)
-    if success {
-      //printReply(packet)
-      //fmt.Println(packet)
-      if packet.Type == "Message" {
-        //message := packet.Data
-        //fmt.Println(message)
-        key := packet.Data["Key"].(string)
-        time_stamp := packet.Data["Time"].(string)
-        nickname := packet.Data["Nick"].(string)
-        data_packet := packet.Data["Data"].(string)
-        message := Message{key,time_stamp,nickname,data_packet}
-        data.writeToTable(message)
-        go printCheckSum()
-        printReply(message)
-        // This packet is just a keep alive
-      } else if packet.Type == "SyncCheck" {
-        node.DataChecksum = packet.Data["Checksum"].(string)
-        if node.DataChecksum != data_state {
-          toSyncNodes <- node
-        }
+	for {
+		node := <-inchan
+		//fmt.Println("Got: " ,node.Data)
+		packet, success := Decode_msg(node.Data)
+		//fmt.Println(key,value)
+		if success {
+			//printReply(packet)
+			//fmt.Println(packet)
+			if packet.Type == "Message" {
+				//message := packet.Data
+				//fmt.Println(message)
+				key := packet.Data["Key"].(string)
+				timeStamp := packet.Data["Time"].(string)
+				nickname := packet.Data["Nick"].(string)
+				dataPacket := packet.Data["Data"].(string)
+				message := Message{key, timeStamp, nickname, dataPacket}
+				data.writeToTable(message)
+				go printCheckSum()
+				printReply(message)
+				// This packet is just a keep alive
+			} else if packet.Type == "SyncCheck" {
+				node.DataChecksum = packet.Data["Checksum"].(string)
+				if node.DataChecksum != dataState {
+					toSyncNodes <- node
+				}
 
-        if packet.Data["ListeningAddress"] != nil {
-          node.Listen = packet.Data["ListeningAddress"].(string)
-          nodes[node.RemoteIP]=node
-        }
+				if packet.Data["ListeningAddress"] != nil {
+					node.Listen = packet.Data["ListeningAddress"].(string)
+					nodes[node.RemoteIP] = node
+				}
 
-        if packet.Data["KnownHosts"] != nil {
-          knownHosts := packet.Data["KnownHosts"].([]interface{})
-          var knownHosts_string []string
+				if packet.Data["KnownHosts"] != nil {
+					knownHosts := packet.Data["KnownHosts"].([]interface{})
+					var knownHostsString []string
 
-          fmt.Println(packet)
+					fmt.Println(packet)
 
-          for _,v := range knownHosts {
-            knownHosts_string = append(knownHosts_string, v.(string))
-          }
+					for _, v := range knownHosts {
+						knownHostsString = append(knownHostsString, v.(string))
+					}
 
-          for _,v := range knownHosts_string {
-            found := false
-            for _,node := range nodes {
-              if node.RemoteIP == v || node.LocalIP == v || node.Listen == v || listen == v || node.Listen == "nill"{
-                found = true
-                break
-              }
-            }
+					for _, v := range knownHostsString {
+						found := false
+						for _, node := range nodes {
+							if node.RemoteIP == v || node.LocalIP == v || node.Listen == v || listen == v || node.Listen == "nill" {
+								found = true
+								break
+							}
+						}
 
-            if found != true {
-              toConnectNodes <- v
-            }
-          }
+						if found != true {
+							toConnectNodes <- v
+						}
+					}
 
+				}
+				// If we receive this packet it means there is a mismatch with the data and we need to correct it
+			} else if packet.Type == "SyncIndex" {
+				if packet.Data["Keys"] != nil {
+					index := packet.Data["Keys"].([]interface{})
+					var indexString []string
+					for _, v := range index {
+						indexString = append(indexString, v.(string))
+					}
 
-        }
-        // If we receive this packet it means there is a mismatch with the data and we need to correct it
-      } else if packet.Type == "SyncIndex" {
-        if packet.Data["Keys"] != nil {
-          index := packet.Data["Keys"].([]interface{})
-          var index_string []string
-          for _,v := range index {
-            index_string = append(index_string, v.(string))
-          }
+					missingKeys := CompareKeys(data.Data_table, indexString)
+					//fmt.Println(missingKeys)
 
-          missing_keys := CompareKeys(data.Data_table, index_string)
-          //fmt.Println(missing_keys)
+					for _, v := range missingKeys {
+						syncRequest(v, node)
+					}
+				}
 
-          for _,v := range missing_keys {
-            syncRequest(v, node)
-          }
-        }
+				//go unicastMessage(Encode_msg(), node)
+				// If we receive this packet it means the node whishes to get a value of a key
+			} else if packet.Type == "RequestPacket" {
+				key := packet.Data["Key"].(string)
+				syncNode(key, node)
+				//fmt.Println(packet)
+				// If we receive this packet it means we got data from the other node to populate our table
+			} else if packet.Type == "SyncPacket" {
+				if packet.Data["Key"] != nil && packet.Data["Value"] != nil {
+					//key := packet.Data["Key"].(string)
+					var message Message
+					//fmt.Println(packet)
+					value := packet.Data["Value"].(map[string]interface{})
+					for k, v := range value {
+						if k == "Data" {
+							message.Data = v.(string)
+						} else if k == "Key" {
+							message.Key = v.(string)
+						} else if k == "Time" {
+							message.Time = v.(string)
+						} else if k == "Nick" {
+							message.Nick = v.(string)
+						}
+					}
 
-        //go unicastMessage(Encode_msg(), node)
-        // If we receive this packet it means the node whishes to get a value of a key
-      } else if packet.Type == "RequestPacket" {
-        key := packet.Data["Key"].(string)
-        syncNode(key, node)
-        //fmt.Println(packet)
-        // If we receive this packet it means we got data from the other node to populate our table
-      } else if packet.Type == "SyncPacket" {
-        if packet.Data["Key"] != nil && packet.Data["Value"] != nil{
-          //key := packet.Data["Key"].(string)
-          var message Message
-          //fmt.Println(packet)
-          value := packet.Data["Value"].(map[string]interface{})
-          for k,v := range value{
-            if k == "Data" {
-              message.Data = v.(string)
-            } else if k == "Key" {
-              message.Key = v.(string)
-            } else if k == "Time" {
-              message.Time = v.(string)
-            } else if k == "Nick" {
-              message.Nick = v.(string)
-            }
-          }
-
-          data.writeToTable(message)
-          printReply(message)
-          go printCheckSum()
-        }
-      }
-    }
-    nodes[node.RemoteIP]=node
-  }
+					data.writeToTable(message)
+					printReply(message)
+					go printCheckSum()
+				}
+			}
+		}
+		nodes[node.RemoteIP] = node
+	}
 }
 
 // ASYNC update checksum
 func printCheckSum() {
-  data_state = data.getDataCheckSum()
-  fmt.Println(data_state)
+	dataState = data.getDataCheckSum()
+	fmt.Println(dataState)
 }
 
 // Message a single node
 func unicastMessage(msg string, node Node) {
-  _ ,err := node.Connection.Write([]byte(msg))
-  if err != nil {
-    fmt.Println("Error sending message!", err)
-    cleanUpNodesChan <- node
-  } else {
-    //fmt.Println("Sent to node: ", msg)
-  }
+	_, err := node.Connection.Write([]byte(msg))
+	if err != nil {
+		fmt.Println("Error sending message!", err)
+		cleanUpNodesChan <- node
+	} else {
+		//fmt.Println("Sent to node: ", msg)
+	}
 }
 
 // Broad cast to all Nodes
 func broadCastMessage(msg string) {
-  for _,node := range nodes{
-    _ ,err := node.Connection.Write([]byte(msg))
-    if err != nil {
-      fmt.Println("Error sending message!", err)
-      cleanUpNodesChan <- node
-    } else {
-      //fmt.Println("Sent: ", msg)
-    }
-  }
+	for _, node := range nodes {
+		_, err := node.Connection.Write([]byte(msg))
+		if err != nil {
+			fmt.Println("Error sending message!", err)
+			cleanUpNodesChan <- node
+		} else {
+			//fmt.Println("Sent: ", msg)
+		}
+	}
 }
 
 func cleanUpNodes() {
-  for {
-    node := <-cleanUpNodesChan
-    fmt.Println("Cleaning up Connection: " + node.RemoteIP)
-    err := node.Connection.Close()
-    if err != nil {
-      fmt.Println("Failed to close!", err)
-    }
-    delete(nodes, node.RemoteIP)
-  }
+	for {
+		node := <-cleanUpNodesChan
+		fmt.Println("Cleaning up Connection: " + node.RemoteIP)
+		err := node.Connection.Close()
+		if err != nil {
+			fmt.Println("Failed to close!", err)
+		}
+		delete(nodes, node.RemoteIP)
+	}
 }
 
 func processInput(msg string) {
 
-  timestamp := time.Now().Format(time.RFC1123)
-  md5_sum_key := md5.Sum([]byte(timestamp + msg))
-  key := hex.EncodeToString(md5_sum_key[:])
-  //msg_array := []string{key,timestamp,nick,msg}
+	timestamp := time.Now().Format(time.RFC1123)
+	md5SumKey := md5.Sum([]byte(timestamp + msg))
+	key := hex.EncodeToString(md5SumKey[:])
+	//msg_array := []string{key,timestamp,nick,msg}
 
-  //data_map := make(map[string][]string)
-  //data_map["Message"] = msg_array
-  message := Message{key,timestamp,nick,msg}
+	//data_map := make(map[string][]string)
+	//data_map["Message"] = msg_array
+	message := Message{key, timestamp, nick, msg}
 
-  input := Encode_msg(Packet{"Message",structs.Map(message)})
-  //fmt.Println(input)
+	input := Encode_msg(Packet{"Message", structs.Map(message)})
+	//fmt.Println(input)
 
-  go broadCastMessage(input)
+	go broadCastMessage(input)
 
-  data.writeToTable(message)
-  go printCheckSum()
+	data.writeToTable(message)
+	go printCheckSum()
 
 }
 
 // Handle client input
 func clientInput() {
-  scanner := bufio.NewScanner(os.Stdin)
-  for scanner.Scan() {
-    // Sleep to prevent duplicates
-    time.Sleep(time.Millisecond)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		// Sleep to prevent duplicates
+		time.Sleep(time.Millisecond)
 
-    input := scanner.Text()
-    // Check for input
-    if (input != "" || len(input) > 0) {
-      processInput(input)
-    }
-  }
+		input := scanner.Text()
+		// Check for input
+		if input != "" || len(input) > 0 {
+			processInput(input)
+		}
+	}
 }
 
 // Client
 func client(host string) {
-  conn, err := net.Dial("tcp", host)
-  if err != nil {
-    fmt.Println("Failed to connect to host!", err)
-    return
-  }
-  fmt.Println("Connecting to: ", conn.RemoteAddr())
-  go handleConnection("Client",conn)
+	conn, err := net.Dial("tcp", host)
+	if err != nil {
+		fmt.Println("Failed to connect to host!", err)
+		return
+	}
+	fmt.Println("Connecting to: ", conn.RemoteAddr())
+	go handleConnection("Client", conn)
 }
 
 // Server function
 func server(host string, port string) {
-  host_string := host + ":" + port
+	hostString := host + ":" + port
 
-  // Start listening
-  ln, err := net.Listen("tcp", host_string)
-  if err != nil {
-    log.Fatalf("Failed to listen:", err)
-  }
+	// Start listening
+	ln, err := net.Listen("tcp", hostString)
+	if err != nil {
+		log.Fatalf("Failed to listen:", err)
+	}
 
-  fmt.Println("Listening on: ", ln.Addr())
-  listen = ln.Addr().String()
+	fmt.Println("Listening on: ", ln.Addr())
+	listen = ln.Addr().String()
 
-  // Handle connections
-  for {
-    if conn, err := ln.Accept(); err == nil {
-      fmt.Println("Incomming connection: ", conn.RemoteAddr())
-      go handleConnection("Server",conn);
-    }
-  }
+	// Handle connections
+	for {
+		if conn, err := ln.Accept(); err == nil {
+			fmt.Println("Incomming connection: ", conn.RemoteAddr())
+			go handleConnection("Server", conn)
+		}
+	}
 }
 
 func readConnection(node Node) {
-  //buf := make([]byte, 4096)
-  for {
-    //n, err := node.Connection.Read(reader)
-    //n, err := reader.ReadLine("\n")
-    line, err := bufio.NewReader(node.Connection).ReadBytes('\n')
-    if err != nil{
-      if err != io.EOF {
-        fmt.Printf("Reached EOF")
-      }
-      cleanUpNodesChan <- node
-      break
-    }
+	//buf := make([]byte, 4096)
+	for {
+		//n, err := node.Connection.Read(reader)
+		//n, err := reader.ReadLine("\n")
+		line, err := bufio.NewReader(node.Connection).ReadBytes('\n')
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("Reached EOF")
+			}
+			cleanUpNodesChan <- node
+			break
+		}
 
-    node.Data = (string(line))
+		node.Data = (string(line))
 
-    inchan <- node
-  }
+		inchan <- node
+	}
 }
 
-
-func handleConnection(type_of_connection string, conn net.Conn) {
-  nodes[conn.RemoteAddr().String()]= Node{type_of_connection,conn,conn.LocalAddr().String(),conn.RemoteAddr().String(),"nill" , "",""}
-  readConnection(nodes[conn.RemoteAddr().String()])
+func handleConnection(typeOfConnection string, conn net.Conn) {
+	nodes[conn.RemoteAddr().String()] = Node{typeOfConnection, conn, conn.LocalAddr().String(), conn.RemoteAddr().String(), "nill", "", ""}
+	readConnection(nodes[conn.RemoteAddr().String()])
 }
